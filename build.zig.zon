@@ -1,0 +1,16 @@
+.{
+    .name = .krvsh,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.17.0",
+    .fingerprint = 0xfef10eebb1580840,
+    .dependencies = .{
+        // The codec-agnostic container. Local path dependency for development; switch
+        // to a URL + hash (git tag tarball from the org) once published.
+        .krvs = .{ .path = "../krvs-container" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

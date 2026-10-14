@@ -1,0 +1,7 @@
+.zig-cache/
+zig-out/
+*.krvs
+*.krvi
+*.krvf
+# generated raw tensor dumps (test fixtures use .npz, which is kept)
+*.f32
