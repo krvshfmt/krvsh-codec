@@ -26,6 +26,15 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
+    // C-ABI static library: exposes the `export fn`s in src/c_api.zig + install header.
+    const capi = b.addLibrary(.{
+        .name = "krvsh_c",
+        .root_module = mod,
+        .linkage = .static,
+    });
+    capi.installHeadersDirectory(b.path("include"), "", .{});
+    b.installArtifact(capi);
+
     // CLI executable: `krvsh encode` / `krvsh decode`.
     const exe = b.addExecutable(.{
         .name = "krvsh",
@@ -92,4 +101,14 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lib_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_golden_tests.step);
+
+    // C smoke test: compile test/capi_smoke.c, link the C-ABI lib, run it.
+    const csmoke_mod = b.createModule(.{ .target = target, .optimize = optimize });
+    csmoke_mod.addCSourceFile(.{ .file = b.path("test/capi_smoke.c"), .flags = &.{"-std=c11"} });
+    csmoke_mod.addIncludePath(b.path("include"));
+    csmoke_mod.linkLibrary(capi);
+    csmoke_mod.link_libc = true;
+    const csmoke = b.addExecutable(.{ .name = "capi_smoke", .root_module = csmoke_mod });
+    const run_csmoke = b.addRunArtifact(csmoke);
+    test_step.dependOn(&run_csmoke.step);
 }

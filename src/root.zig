@@ -30,6 +30,14 @@ pub const krvsh_frame = @import("krvsh_frame.zig");
 /// with the krvsh codec id + init-id hash + verify-on-ingest resolver.
 pub const krvsh_box = @import("krvsh_glue.zig");
 
+/// C ABI exports (see include/krvsh.h).
+pub const c_api = @import("c_api.zig");
+
+// Keep the C ABI exports in the library artifact (not dead-stripped).
+comptime {
+    _ = c_api;
+}
+
 /// Container major version (the `krvs` marker box version).
 pub const CONTAINER_VERSION: u8 = krvs.CONTAINER_VERSION;
 
@@ -42,4 +50,5 @@ test {
     _ = krvsh_init;
     _ = krvsh_frame;
     _ = krvsh_box;
+    _ = c_api;
 }
