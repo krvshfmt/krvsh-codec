@@ -26,10 +26,18 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
-    // C-ABI static library: exposes the `export fn`s in src/c_api.zig + install header.
+    // C-ABI static library: separate module rooted at c_root.zig (keeps the exports +
+    // links libc, since c_api uses the C allocator). The plain lib stays libc-free.
+    const capi_mod = b.createModule(.{
+        .root_source_file = b.path("src/c_root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "krvs", .module = krvs_mod }},
+    });
+    capi_mod.link_libc = true;
     const capi = b.addLibrary(.{
         .name = "krvsh_c",
-        .root_module = mod,
+        .root_module = capi_mod,
         .linkage = .static,
     });
     capi.installHeadersDirectory(b.path("include"), "", .{});
