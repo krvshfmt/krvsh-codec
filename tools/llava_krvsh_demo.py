@@ -109,12 +109,6 @@ with open(f32_path, "wb") as f:
     for t in tensors:
         f.write(t.astype("<f4").tobytes())
 
-# ---- calibrate once (fit basis on this prefill; n=1 demo, overfit caveat below) ----
-krvi = os.path.join(WORK, "llava.krvi")
-subprocess.run([PY, CALIB, os.path.join(WORK, "kv.npz"), krvi,
-                "--rank", str(RANK), "--model-id", MODEL, "--revision", "demo"],
-               check=True)
-
 def unfold(mat):  # (T, H*Dh) f32 -> (1,H,T,Dh) bf16
     tt = mat.shape[0]
     t = torch.from_numpy(np.array(mat, dtype=np.float32).reshape(tt, H, Dh)).permute(1, 0, 2).unsqueeze(0)
@@ -126,19 +120,19 @@ def load_f32(path):
         arr = np.frombuffer(f.read(), dtype="<f4").reshape(n, tt, dd)
     return arr
 
-# ---- sweep s: encode -> decode -> rebuild cache -> resume -> compare ----
-log("\n s      coded_KB   ratio     answer")
-for s in [0.5, 1.0, 2.0, 4.0]:
-    krvf = os.path.join(WORK, f"kv_s{s}.krvf")
-    out_f32 = os.path.join(WORK, f"recon_s{s}.f32")
-    subprocess.run([KRVSH, "encode", krvi, f32_path, krvf, str(s)], check=True,
-                   stdout=subprocess.DEVNULL)
+def run(rank, s):
+    """Calibrate at `rank`, encode/decode at `s`, resume, return (coded_bytes, answer)."""
+    krvi = os.path.join(WORK, f"llava_r{rank}.krvi")
+    if not os.path.exists(krvi):
+        subprocess.run([PY, CALIB, os.path.join(WORK, "kv.npz"), krvi,
+                        "--rank", str(rank), "--model-id", MODEL, "--revision", "demo"],
+                       check=True, stdout=subprocess.DEVNULL)
+    krvf = os.path.join(WORK, f"kv_r{rank}_s{s}.krvf")
+    out_f32 = os.path.join(WORK, f"recon_r{rank}_s{s}.f32")
+    subprocess.run([KRVSH, "encode", krvi, f32_path, krvf, str(s)], check=True, stdout=subprocess.DEVNULL)
     coded = os.path.getsize(krvf)
-    subprocess.run([KRVSH, "decode", krvf, krvi, out_f32], check=True,
-                   stdout=subprocess.DEVNULL)
+    subprocess.run([KRVSH, "decode", krvf, krvi, out_f32], check=True, stdout=subprocess.DEVNULL)
     recon = load_f32(out_f32)
-
-    # rebuild a fresh cache via a prefill, overwrite with reconstructed tensors
     with torch.no_grad():
         pre_s = model(**inputs, use_cache=True)
     cache_s = pre_s.past_key_values
@@ -147,11 +141,21 @@ for s in [0.5, 1.0, 2.0, 4.0]:
         cache_s.layers[i].values = unfold(recon[2*i+1])
     ids = greedy_from_cache(cache_s, pre_s.logits, T)
     ans = proc.decode(ids[0], skip_special_tokens=True).split("ASSISTANT:")[-1].strip()
-    ratio = raw_kv_bytes / coded
-    log(f" {s:<5} {coded/1024:8.1f}  {ratio:7.1f}x   {ans[:70]}")
+    return coded, ans
+
+# ---- frontier sweep: rank x s. Research found LOW rank (~64) + quant BEATS high rank:
+# fewer dims pack energy into higher-SNR coeffs that survive quant. R=512 (old demo) was
+# wasting budget. Sweep to find the real 500x-with-correct-answer frontier. ----
+ranks = [256, 128, 64, 32]
+ss = [1.0, 2.0, 4.0, 8.0]
+log("\n rank  s     coded_KB   ratio     answer")
+for rank in ranks:
+    for s in ss:
+        coded, ans = run(rank, s)
+        ratio = raw_kv_bytes / coded
+        log(f" {rank:<5} {s:<5} {coded/1024:8.1f}  {ratio:7.1f}x   {ans[:60]}")
 
 log(f"\nraw KV = {raw_kv_bytes/1e6:.1f} MB (bf16), {n_layers} layers x 2 x ({T},{D})")
-log("baseline answer for reference:")
-log("  " + ans_base.split("ASSISTANT:")[-1].strip()[:70])
+log("baseline: " + ans_base.split("ASSISTANT:")[-1].strip()[:60])
 log("\nCAVEAT: n=1 demo, basis fit on the SAME prefill it compresses (overfit-optimistic).")
-log("Research multi-image LLaVA number was ~400x @ 0.94 semantic similarity.")
+log("Target: 500x with a comprehensible/correct answer.")
